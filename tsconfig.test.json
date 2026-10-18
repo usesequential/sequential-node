@@ -1,0 +1,10 @@
+{
+    // The tests and the source, type-checked together (npm run typecheck, and ts-jest).
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": ".",
+        "noEmit": true,
+        "types": ["node", "jest"]
+    },
+    "include": ["src/**/*", "tests/**/*"]
+}
