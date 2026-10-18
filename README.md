@@ -63,6 +63,10 @@ When you send a `userId` and a `context`, Sequential keeps the session only when
 visitor can edit their own cookie, so a context that belongs to another visitor is dropped. The event then stays on the
 user with no session. `stats.context_dropped` counts it.
 
+Sequential can prove that a context belongs to a user only after it has stored the browser's `identify()`. That can
+take about a minute. In that first minute after a visitor signs in, an event with their `userId` stays on the user but
+not in the session, and `stats.context_dropped` counts it.
+
 ### Where the context comes from
 
 The browser SDK writes the first-party cookie `__sq_ctx` on your own domain while it records. The cookie reaches your
@@ -75,7 +79,7 @@ backend with each request from your pages, and `contextFromRequest(req)` reads i
 - A native app calls your API. Send the header.
 
 `contextFromRequest` accepts Node's request (Express, Koa's `ctx.req`, Fastify's `request.raw`, plain `http`) and a
-Fetch API `Request` (Next.js route handlers, Hono, workers). It returns `null` when the request has no context.
+Fetch API `Request` (Next.js route handlers, Hono's `c.req.raw`, workers). It returns `null` when the request has no context.
 
 ## Send an error
 
