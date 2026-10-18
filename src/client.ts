@@ -1,5 +1,5 @@
 // SequentialServer: events from the customer's backend onto the same person and browser session as that person's
-// browser events (spec 2026-10-12, docs/superpowers/specs/2026-10-12-backend-sdk-design.md in the Sequential repo).
+// browser events.
 //
 // The join key, in the order the server applies it: userId (the id the browser's identify() sends) wins; the browser
 // context adds the session when it belongs to that user; with no userId the context alone is the key (counted as

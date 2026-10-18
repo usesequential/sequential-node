@@ -20,6 +20,11 @@ describe('@usesequential/node package', () => {
         expect(pkg.license).toBe('MIT');
     });
 
+    it('names its public source repository and issue tracker', () => {
+        expect(pkg.repository).toEqual({ type: 'git', url: 'git+https://github.com/usesequential/sequential-node.git' });
+        expect(pkg.bugs).toEqual({ url: 'https://github.com/usesequential/sequential-node/issues' });
+    });
+
     it('exports both module formats, each with its own types, and publishes only dist + docs', () => {
         expect(pkg.exports['.']).toEqual({
             import: { types: './dist/esm/index.d.ts', default: './dist/esm/index.js' },
@@ -32,6 +37,14 @@ describe('@usesequential/node package', () => {
         for (const f of ['index.ts', 'client.ts', 'context.ts', 'version.ts']) {
             const src = readFileSync(join(dir, 'src', f), 'utf8');
             for (const m of src.matchAll(/from '([^']+)'/g)) expect(m[1]).toMatch(/^(node:|\.\/)/);
+        }
+    });
+
+    // The comments ship in dist and in the public repository: they name no file of the private monorepo.
+    it('the source comments name no private path', () => {
+        for (const f of ['index.ts', 'client.ts', 'context.ts', 'version.ts']) {
+            const src = readFileSync(join(dir, 'src', f), 'utf8');
+            expect(src).not.toMatch(/docs\/superpowers|src\/(adapters|handlers|lists|routes|auth|ingest)\//);
         }
     });
 
