@@ -67,7 +67,7 @@ describe('SequentialServer: track', () => {
         });
     });
 
-    it('gives every event its own uuid, so a retried batch is stored once', async () => {
+    it('gives every event its own uuid, and a retry resends the same uuids', async () => {
         const { f, calls } = fakeFetch([503, 200]);
         const sq = client({}, f);
         sq.track({ event: 'a', userId: 'u' });
@@ -323,6 +323,105 @@ describe('SequentialServer: retries', () => {
         await sq2.flush();
         expect(second.calls).toHaveLength(4);
         expect(sq2.stats.dropped_after_retries).toBe(1);
+    });
+
+    // 503 overloaded (the server answers it with Retry-After 30-60 s while its database is down, 3-8 s when shedding load): held like
+    // a 429, up to maxRetryMs (5 min) from the first failure, without spending maxRetries (2026-10-22).
+    const overloaded = (sec: number) => ({ status: 503, headers: { 'retry-after': String(sec) }, body: { error: 'overloaded', retry_after_sec: sec } });
+
+    it('a 4-minute 503 overloaded outage: the batch waits each Retry-After and is sent once when the server is back (default maxRetries 3)', async () => {
+        jest.useFakeTimers();
+        try {
+            const { f, calls } = fakeFetch([overloaded(33), overloaded(45), overloaded(53), overloaded(60), overloaded(60), 200]);
+            const errors: SequentialError[] = [];
+            const sq = client({ onError: (e) => errors.push(e) }, f);
+            sq.track({ event: 'held', userId: 'u' });
+            const done = sq.flush();
+            for (const [wait, n] of [[33, 2], [45, 3], [53, 4], [60, 5], [60, 6]] as const) {
+                await jest.advanceTimersByTimeAsync(wait * 1000 - 1);
+                expect(calls).toHaveLength(n - 1); // not before Retry-After
+                await jest.advanceTimersByTimeAsync(1);
+                expect(calls).toHaveLength(n);
+            }
+            await done;
+            expect(sq.stats).toMatchObject({ retries: 5, sent: 1, dropped_after_retries: 0 });
+            expect(errors).toEqual([]);
+            expect(new Set(calls.map((c) => c.body.events[0].uuid)).size).toBe(1); // the same event each time
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('a 503 overloaded that outlasts maxRetryMs (5 min from the first failure) drops the batch, once, as retries_exhausted', async () => {
+        jest.useFakeTimers();
+        try {
+            const { f, calls } = fakeFetch([overloaded(60)]);
+            const errors: SequentialError[] = [];
+            const sq = client({ onError: (e) => errors.push(e) }, f);
+            sq.track({ event: 'held', userId: 'u' });
+            const done = sq.flush();
+            await jest.advanceTimersByTimeAsync(300_000);
+            await done;
+            expect(calls).toHaveLength(6); // at 0, 60, 120, 180, 240 and 300 s; the sixth refusal is 5 min after the first
+            expect(sq.stats).toMatchObject({ dropped_after_retries: 1, sent: 0 });
+            expect(errors).toHaveLength(1);
+            expect(errors[0]).toMatchObject({ reason: 'retries_exhausted', events: 1, status: 503 });
+            // maxRetryMs is an option: 1 min holds the batch through one wait only
+            const short = fakeFetch([overloaded(60)]);
+            const sq2 = client({ maxRetryMs: 60_000 }, short.f);
+            sq2.track({ event: 'held', userId: 'u' });
+            const done2 = sq2.flush();
+            await jest.advanceTimersByTimeAsync(60_000);
+            await done2;
+            expect(short.calls).toHaveLength(2);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('a plain 500 (no Retry-After) still retries with backoff and gives up after maxRetries (3 by default); a 503 without Retry-After too', async () => {
+        for (const status of [500, 503]) {
+            const { f, calls } = fakeFetch([status]);
+            const sq = client({}, f);
+            sq.track({ event: 'e', userId: 'u' });
+            await sq.flush();
+            expect([status, calls.length, sq.stats.dropped_after_retries]).toEqual([status, 4, 1]);
+        }
+    }, 15_000);
+
+    it('a 429 with Retry-After is unchanged (waits for it), and its waits do not spend maxRetries either', async () => {
+        jest.useFakeTimers();
+        try {
+            const limited = { status: 429, headers: { 'retry-after': '1' } };
+            const { f, calls } = fakeFetch([limited, limited, limited, limited, 200]);
+            const sq = client({ maxRetries: 0 }, f); // no backoff retries at all: the 429 waits still go on
+            sq.track({ event: 'e', userId: 'u' });
+            const done = sq.flush();
+            await jest.advanceTimersByTimeAsync(4_000);
+            await done;
+            expect(calls).toHaveLength(5);
+            expect(sq.stats).toMatchObject({ http429: 4, retries: 4, sent: 1 });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('the queue cap holds while a batch is held: new events above maxQueue are dropped and counted, not buffered', async () => {
+        jest.useFakeTimers();
+        try {
+            const { f } = fakeFetch([overloaded(30), 200]);
+            const sq = client({ maxQueue: 3, flushAt: 500 }, f);
+            sq.track({ event: 'held', userId: 'u' });
+            const done = sq.flush(); // the batch leaves the queue and waits 30 s
+            await jest.advanceTimersByTimeAsync(1);
+            const accepted = [1, 2, 3, 4].map(() => sq.track({ event: 'later', userId: 'u' }));
+            expect(accepted).toEqual([true, true, true, false]);
+            expect(sq.stats.dropped_queue_full).toBe(1);
+            await jest.advanceTimersByTimeAsync(30_000);
+            await done;
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it('drops a batch the server refuses with another 4xx, without retrying', async () => {

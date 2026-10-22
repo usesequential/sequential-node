@@ -1,6 +1,6 @@
 {
     "name": "@usesequential/node",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Send your backend's events and errors to Sequential, on the same person and browser session as their browser events.",
     "keywords": [
         "sequential",

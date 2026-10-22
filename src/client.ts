@@ -6,9 +6,11 @@
 // unverified). An event with neither is not sent.
 //
 // Volume: events queue in memory and leave in batches (flushAt events or flushIntervalMs, whichever comes first), each
-// under maxBatchBytes and the server's 500-event cap. A 429 waits for Retry-After; a 5xx or a network error retries
-// with backoff; any other 4xx drops the batch. A full queue drops new events rather than growing. Every drop is
-// counted in `stats`. Every event carries a uuid, so a retried batch is stored once.
+// under maxBatchBytes and the server's 500-event cap. A 429 or a 503 with Retry-After (the server shedding load, or its
+// database unavailable: 503 overloaded) waits for it, and is held up to maxRetryMs after the batch's first failure; any
+// other 5xx or a network error retries with backoff, maxRetries times; any other 4xx drops the batch. A full queue drops
+// new events rather than growing. Every drop is counted in `stats`. Every event carries a uuid; the server does not
+// deduplicate retries today (since 2026-10-22), so a batch whose first attempt was stored is stored again on a retry.
 import { randomUUID } from 'node:crypto';
 import type { SequentialContext } from './context';
 import { SDK_VERSION } from './version';
@@ -21,6 +23,8 @@ export const SERVER_MAX_EVENTS = 500;
 export const SERVER_MAX_BODY_BYTES = 1_000_000;
 /** The longest wait between two retries of a 5xx or a network error. */
 const MAX_BACKOFF_MS = 30_000;
+/** The longest single Retry-After wait (the server sends 3-8 s when it sheds load, 30-60 s when its database is down). */
+const MAX_RETRY_AFTER_SEC = 60;
 /** The longest delay setTimeout keeps. Node runs a longer delay after 1 ms. */
 const MAX_TIMER_MS = 2_147_483_647;
 const MAX_NAME = 200;
@@ -41,8 +45,12 @@ export interface SequentialServerOptions {
     maxBatchBytes?: number;
     /** The most events held in memory. Default 10,000; new events above it are dropped. */
     maxQueue?: number;
-    /** Retries of a batch after a 429, a 5xx or a network error. Default 3. */
+    /** Retries of a batch after a 5xx or a network error that the server gave no Retry-After for. Default 3. */
     maxRetries?: number;
+    /** How long a batch is held while the server answers 429 or 503 with Retry-After (it waits each Retry-After, at most
+     *  60 s at a time), from the batch's first failure. Default 300,000 (5 min, as the browser SDK). Those waits do not
+     *  spend maxRetries. */
+    maxRetryMs?: number;
     /** Send nothing (tests, local development). track() still validates and counts. */
     disabled?: boolean;
     /** Called for each dropped event or batch, with the reason. Never throws into your code. */
@@ -181,6 +189,7 @@ export class SequentialServer {
     private readonly maxBatchBytes: number;
     private readonly maxQueue: number;
     private readonly maxRetries: number;
+    private readonly maxRetryMs: number;
     private readonly disabled: boolean;
     private readonly onError?: (e: SequentialError) => void;
     private readonly fetchImpl: typeof fetch;
@@ -206,6 +215,7 @@ export class SequentialServer {
         this.maxBatchBytes = numberOption(opts.maxBatchBytes, 512 * 1024, 1024, SERVER_MAX_BODY_BYTES);
         this.maxQueue = Math.floor(numberOption(opts.maxQueue, 10_000, 1, Number.MAX_SAFE_INTEGER));
         this.maxRetries = Math.floor(numberOption(opts.maxRetries, 3, 0, Number.MAX_SAFE_INTEGER));
+        this.maxRetryMs = numberOption(opts.maxRetryMs, 300_000, 0, Number.MAX_SAFE_INTEGER);
         this.disabled = opts.disabled === true;
         this.onError = opts.onError;
         this.fetchImpl = f;
@@ -361,6 +371,8 @@ export class SequentialServer {
     private async sendBatch(events: QueuedEvent[]): Promise<void> {
         if (!events.length) return;
         if (this.disabled) return;
+        let firstFailureAt = 0;
+        let backoffRetries = 0; // only the retries that spend maxRetries (no Retry-After)
         for (let attempt = 0; ; attempt++) {
             let status: number;
             let retryAfterSec = 0;
@@ -397,15 +409,25 @@ export class SequentialServer {
                 this.report('client_error', `Sequential refused the batch (HTTP ${status})`, events.length, status);
                 return;
             }
-            if (attempt >= this.maxRetries) {
+            if (firstFailureAt === 0) firstFailureAt = Date.now();
+            // The server said when to come back (a 429, or a 503 overloaded: load shed or its database down): wait that,
+            // and hold the batch up to maxRetryMs from its first failure. These waits do not spend maxRetries.
+            const held = (status === 429 || status === 503) && retryAfterSec > 0;
+            const last = status ? `HTTP ${status}` : 'network error';
+            if (held ? Date.now() - firstFailureAt >= this.maxRetryMs : backoffRetries >= this.maxRetries) {
                 this.stats.dropped_after_retries += events.length;
-                this.report('retries_exhausted', `the batch failed ${attempt + 1} times (last: ${status ? `HTTP ${status}` : 'network error'})`, events.length, status || undefined);
+                this.report('retries_exhausted', `the batch failed ${attempt + 1} times (last: ${last})`, events.length, status || undefined);
                 return;
             }
             this.stats.retries++;
-            // Capped: 200 * 2 ** attempt grows past the longest setTimeout delay at attempt 24, and Node then waits 1 ms.
-            const backoff = Math.min(200 * 2 ** attempt, MAX_BACKOFF_MS) + Math.floor(Math.random() * 100);
-            await sleep(status === 429 && retryAfterSec > 0 ? Math.min(retryAfterSec, 60) * 1000 : backoff);
+            if (held) {
+                await sleep(Math.min(retryAfterSec, MAX_RETRY_AFTER_SEC) * 1000);
+                continue;
+            }
+            // Capped: 200 * 2 ** n grows past the longest setTimeout delay at n = 24, and Node then waits 1 ms.
+            const backoff = Math.min(200 * 2 ** backoffRetries, MAX_BACKOFF_MS) + Math.floor(Math.random() * 100);
+            backoffRetries++;
+            await sleep(backoff);
         }
     }
 

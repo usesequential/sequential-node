@@ -121,7 +121,8 @@ error messages. Sequential screens names and emails in what agents read, but you
 | `flushIntervalMs` | 1000 | Send what is queued at least this often. |
 | `maxBatchBytes` | 512 kB (at most 1 MB) | The largest request. One event over it is dropped. |
 | `maxQueue` | 10,000 | The most events held in memory. New events above it are dropped. |
-| `maxRetries` | 3 | Retries after a 429, a 5xx or a network error. |
+| `maxRetries` | 3 | Retries after a 5xx or a network error that came without `Retry-After`. |
+| `maxRetryMs` | 300,000 | How long a batch is held while the server answers 429 or 503 with `Retry-After` (5 minutes, from the batch's first failure). |
 | `disabled` | `false` | Send nothing (tests, local development). |
 | `onError` | none | Called with a `SequentialError` for each drop: `reason`, `events`, `status`. |
 | `fetch` | global `fetch` | Your own fetch. |
@@ -135,10 +136,14 @@ be lost. The SDK's timer never keeps a process alive by itself.
 
 ## Delivery
 
-- A 429 waits for the server's `Retry-After` (at most 60 s), then sends the batch again.
-- A 5xx or a network error retries with backoff (at most 30 s between tries), `maxRetries` times.
+- A 429, or a 503 with `Retry-After` (Sequential shedding load, or its database briefly unavailable: `503 overloaded`),
+  waits for the server's `Retry-After` (at most 60 s each time), then sends the batch again. It keeps doing that for up
+  to `maxRetryMs` (5 minutes) after the batch's first failure, then drops the batch. These waits do not use up
+  `maxRetries`.
+- Any other 5xx, or a network error, retries with backoff (at most 30 s between tries), `maxRetries` times.
 - Any other 4xx (a revoked key, a refused body) drops the batch.
-- Every event has a `uuid`, so a batch that is sent twice is stored once.
+- Every event has a `uuid`. Sequential does not drop retried events as duplicates today, so a batch whose first attempt
+  was stored (for example, the answer timed out) is stored again when the SDK sends it again.
 - `track()` makes the event's JSON at once. A prop that JSON cannot hold (a `BigInt`, a circular object) drops the
   event: `track()` returns `false` and `stats.dropped_invalid` counts it. A later change to a prop object does not
   change the queued event.
