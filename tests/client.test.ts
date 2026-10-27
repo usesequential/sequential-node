@@ -498,6 +498,58 @@ describe('SequentialServer: errors', () => {
     });
 });
 
+describe('SequentialServer: release', () => {
+    const releasesOf = (calls: Call[]) => calls.flatMap((c) => c.body.events.map((e) => e.props.$release));
+
+    it('sends the release option as $release on every event, errors included', async () => {
+        const { f, calls } = fakeFetch();
+        const sq = client({ release: 'backend@1a2b3c4d5e6f' }, f);
+        sq.track({ event: 'order charged', userId: 'u', props: { plan: 'pro' } });
+        sq.captureError(new Error('x'), { userId: 'u' });
+        sq.captureHttpError({ status: 500, method: 'GET', route: '/x', userId: 'u' });
+        await sq.flush();
+        expect(releasesOf(calls)).toEqual(['backend@1a2b3c4d5e6f', 'backend@1a2b3c4d5e6f', 'backend@1a2b3c4d5e6f']);
+        expect(calls[0].body.events[0].props.plan).toBe('pro');
+    });
+
+    it('sends no $release without the option', async () => {
+        const { f, calls } = fakeFetch();
+        const sq = client({}, f);
+        sq.track({ event: 'order charged', userId: 'u' });
+        await sq.flush();
+        expect('$release' in calls[0].body.events[0].props).toBe(false);
+    });
+
+    it("an event's own $release prop wins over the option; an undefined one does not", async () => {
+        const { f, calls } = fakeFetch();
+        const sq = client({ release: 'backend@1' }, f);
+        sq.track({ event: 'a', userId: 'u', props: { $release: 'worker@2' } });
+        sq.track({ event: 'b', userId: 'u', props: { $release: undefined } });
+        await sq.flush();
+        expect(releasesOf(calls)).toEqual(['worker@2', 'backend@1']);
+    });
+
+    it('trims the option, and sends none for a value ingest would store as none', async () => {
+        const { f, calls } = fakeFetch();
+        const ok = client({ release: '  1.4.0 ' }, f);
+        ok.track({ event: 'a', userId: 'u' });
+        await ok.flush();
+        expect(releasesOf(calls)).toEqual(['1.4.0']);
+        for (const bad of ['', '   ', 'x'.repeat(65), 'caf\u00e9', 'a\nb', 'undefined', 'NULL', ' None ', '(null)', 42, null]) {
+            const c = fakeFetch();
+            const sq = client({ release: bad as unknown as string }, c.f);
+            sq.track({ event: 'a', userId: 'u' });
+            await sq.flush();
+            expect([bad, '$release' in c.calls[0].body.events[0].props]).toEqual([bad, false]);
+        }
+        const c = fakeFetch();
+        const max = client({ release: 'x'.repeat(64) }, c.f);
+        max.track({ event: 'a', userId: 'u' });
+        await max.flush();
+        expect(releasesOf(c.calls)).toEqual(['x'.repeat(64)]);
+    });
+});
+
 describe('SequentialServer: shutdown', () => {
     it('flushes what is queued, and concurrent flushes share one send', async () => {
         const { f, calls } = fakeFetch();

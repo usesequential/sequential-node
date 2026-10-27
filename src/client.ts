@@ -31,6 +31,10 @@ const MAX_NAME = 200;
 const MAX_ID = 200;
 const STACK_LINES = 20;
 const MAX_ERROR_TEXT = 2000;
+/** The release rule of Sequential's ingest, as for the browser's data-release: printable ASCII, 1-64 characters after
+ *  trim, and not a stringified missing value. Ingest stores any other value as no release. */
+export const RELEASE_PATTERN = /^[\x20-\x7E]{1,64}$/;
+export const RELEASE_PLACEHOLDERS: readonly string[] = ['undefined', 'null', 'none', '(null)'];
 
 export interface SequentialServerOptions {
     /** The server secret key (sqs_…) from Settings → Server keys. Never the browser write key. */
@@ -51,6 +55,10 @@ export interface SequentialServerOptions {
      *  60 s at a time), from the batch's first failure. Default 300,000 (5 min, as the browser SDK). Those waits do not
      *  spend maxRetries. */
     maxRetryMs?: number;
+    /** The build this server runs, for example 'backend@1a2b3c4d5e6f', sent as `$release` on every event so Sequential
+     *  can compare before and after a release. 1-64 printable ASCII characters; any other value is not sent. An event's
+     *  own `$release` prop wins. */
+    release?: string;
     /** Send nothing (tests, local development). track() still validates and counts. */
     disabled?: boolean;
     /** Called for each dropped event or batch, with the reason. Never throws into your code. */
@@ -172,6 +180,13 @@ function numberOption(v: number | undefined, def: number, min: number, max: numb
     return Math.min(max, Math.max(min, n));
 }
 
+/** The release as ingest stores it, or undefined when ingest would store none. */
+function releaseOrUndefined(v: unknown): string | undefined {
+    if (typeof v !== 'string') return undefined;
+    const s = v.trim();
+    return RELEASE_PATTERN.test(s) && !RELEASE_PLACEHOLDERS.includes(s.toLowerCase()) ? s : undefined;
+}
+
 function isoTime(ts: Date | string | number | null | undefined): string {
     if (ts === undefined || ts === null) return new Date().toISOString();
     const d = ts instanceof Date ? ts : new Date(ts);
@@ -191,6 +206,7 @@ export class SequentialServer {
     private readonly maxRetries: number;
     private readonly maxRetryMs: number;
     private readonly disabled: boolean;
+    private readonly release: string | undefined;
     private readonly onError?: (e: SequentialError) => void;
     private readonly fetchImpl: typeof fetch;
     readonly stats: SdkStats = {
@@ -217,6 +233,7 @@ export class SequentialServer {
         this.maxRetries = Math.floor(numberOption(opts.maxRetries, 3, 0, Number.MAX_SAFE_INTEGER));
         this.maxRetryMs = numberOption(opts.maxRetryMs, 300_000, 0, Number.MAX_SAFE_INTEGER);
         this.disabled = opts.disabled === true;
+        this.release = releaseOrUndefined(opts.release);
         this.onError = opts.onError;
         this.fetchImpl = f;
     }
@@ -312,7 +329,8 @@ export class SequentialServer {
             return false;
         }
         const account_id = idOrUndefined(input.accountId);
-        const flat: Record<string, unknown> = {};
+        // The release option first, so an event's own $release prop wins (as sequential.js's data-release).
+        const flat: Record<string, unknown> = this.release === undefined ? {} : { $release: this.release };
         for (const [k, v] of Object.entries(props)) if (v !== undefined && typeof v !== 'function') flat[k] = v;
         const wire: WireEvent = {
             event: name,

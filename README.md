@@ -123,6 +123,7 @@ error messages. Sequential screens names and emails in what agents read, but you
 | `maxQueue` | 10,000 | The most events held in memory. New events above it are dropped. |
 | `maxRetries` | 3 | Retries after a 5xx or a network error that came without `Retry-After`. |
 | `maxRetryMs` | 300,000 | How long a batch is held while the server answers 429 or 503 with `Retry-After` (5 minutes, from the batch's first failure). |
+| `release` | none | The build this server runs, for example `'backend@' + process.env.GIT_SHA`, sent as `$release` on every event so Sequential can compare before and after a release. 1-64 printable ASCII characters; any other value is not sent. An event's own `$release` prop wins. |
 | `disabled` | `false` | Send nothing (tests, local development). |
 | `onError` | none | Called with a `SequentialError` for each drop: `reason`, `events`, `status`. |
 | `fetch` | global `fetch` | Your own fetch. |

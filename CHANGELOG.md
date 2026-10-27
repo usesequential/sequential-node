@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4
+
+- New option `release`: the build your server runs, sent as `$release` on every event, so Sequential can compare
+  before and after a release and verify fixes. The same rule as the browser's `data-release`: 1-64 printable ASCII
+  characters after trim; any other value is not sent. An event's own `$release` prop wins.
+- Sequential now stores a server event's `$release` as the event's release, not as a property.
+
 ## 1.0.3
 
 - A 503 with `Retry-After` (`503 overloaded`: Sequential shedding load, or its database briefly unavailable) now waits
