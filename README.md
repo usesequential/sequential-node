@@ -176,6 +176,49 @@ be lost. The SDK's timer never keeps a process alive by itself.
 - The cookie holds the visitor id and the session id that the browser SDK already keeps. After `identify()`, the
   visitor id can be your user id. If your user ids are emails, the cookie holds an email.
 
+## Command line
+
+The package also installs a `sequential` command. It records a change on your project's Changes timeline, for
+example from a deploy step:
+
+```sh
+SEQUENTIAL_TOKEN=sq_pat_… npx sequential changes record \
+  --kind release --title "Checkout v2.14" --version web@2.14 \
+  --pr https://github.com/acme/shop/pull/812
+```
+
+- The token is a personal access token with the `changes:write` scope, read from `SEQUENTIAL_TOKEN` only. It is never
+  printed. A server key (`sqs_…`) sends events only and is refused.
+- `--kind` is one of release, product, pricing, marketing, incident, company, external or tracking; `--title` is one
+  line, at most 140 characters. `--external-id` makes a repeat find the same entry.
+- A release recorded here is a Changes entry. To have Sequential verify fixes against it, also send the release
+  marker (`POST /api/releases` with a `releases:write` token), for example with `sequential releases record`.
+- `--dry-run` prints what would be sent and sends nothing. `sequential --help` lists every option.
+- `sequential releases record --version web@2.14` posts that release marker: the version your app now runs, exactly
+  as it sends it as its release, which fix verification measures against. It has its own token,
+  `SEQUENTIAL_RELEASES_TOKEN`, a personal access token with the `releases:write` scope, so a deploy step needs no
+  right to write the timeline. Options: `--environment`, `--commit-sha`, `--released-at`, `--finding F-12`
+  (repeatable).
+- The exit code is 0 when Sequential recorded it (or found it already recorded), 1 when it refused or could not be
+  reached, and 2 for a mistake in the command.
+
+In CI, record a run's changes in ONE request with `changes sync`, not `changes record` once per commit:
+
+```sh
+git log --format='%H%x09%s' "$BEFORE..$AFTER" | jq -Rn '[inputs | split("\t") | {kind: "product", title: .[1], external_id: .[0]}]' \
+  | SEQUENTIAL_TOKEN=sq_pat_… npx sequential changes sync --items - --source git --covered-through "$(date -u +%FT%TZ)"
+```
+
+- `--items` is a file, or `-` for stdin, holding a JSON array of 1 to 100 changes, each with at least `kind` and
+  `title` and any field of `changes record` in its JSON name (`external_id`, `links`, `start` …). More than 100 is
+  refused: one run is one request, so split the range instead.
+- `--source` names the source of every item that names none (default `ci`); `--covered-through` (with
+  `--covered-from`) declares the range this run covers, so a stretch with no entries means nothing happened.
+  `--atomic` writes nothing when any item is refused.
+- It prints one line per item (its outcome, or why it was refused) and exits 0 when every item was written, 3 when
+  some were refused, 1 when the run was refused or Sequential could not be reached, and 2 for a mistake in the
+  command.
+
 ## License
 
 MIT

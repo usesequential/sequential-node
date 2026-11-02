@@ -1,6 +1,6 @@
 {
     "name": "@usesequential/node",
-    "version": "1.0.4",
+    "version": "1.1.0",
     "description": "Send your backend's events and errors to Sequential, on the same person and browser session as their browser events.",
     "keywords": [
         "sequential",
@@ -23,6 +23,9 @@
     "main": "./dist/cjs/index.js",
     "module": "./dist/esm/index.js",
     "types": "./dist/cjs/index.d.ts",
+    "bin": {
+        "sequential": "./dist/cjs/bin.js"
+    },
     "exports": {
         ".": {
             "import": {

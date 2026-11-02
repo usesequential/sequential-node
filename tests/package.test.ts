@@ -34,7 +34,7 @@ describe('@usesequential/node package', () => {
     });
 
     it('the source imports only node: builtins and its own files', () => {
-        for (const f of ['index.ts', 'client.ts', 'context.ts', 'version.ts']) {
+        for (const f of ['index.ts', 'client.ts', 'context.ts', 'version.ts', 'cli.ts', 'bin.ts']) {
             const src = readFileSync(join(dir, 'src', f), 'utf8');
             for (const m of src.matchAll(/from '([^']+)'/g)) expect(m[1]).toMatch(/^(node:|\.\/)/);
         }
@@ -42,10 +42,24 @@ describe('@usesequential/node package', () => {
 
     // The comments ship in dist and in the public repository: they name no file of the private monorepo.
     it('the source comments name no private path', () => {
-        for (const f of ['index.ts', 'client.ts', 'context.ts', 'version.ts']) {
+        for (const f of ['index.ts', 'client.ts', 'context.ts', 'version.ts', 'cli.ts', 'bin.ts']) {
             const src = readFileSync(join(dir, 'src', f), 'utf8');
             expect(src).not.toMatch(/docs\/superpowers|src\/(adapters|handlers|lists|routes|auth|ingest)\//);
         }
+    });
+
+    it('ships the `sequential` command from the CommonJS build, outside the library: index imports neither cli nor bin', () => {
+        expect(pkg.bin).toEqual({ sequential: './dist/cjs/bin.js' });
+        expect(readFileSync(join(dir, 'src', 'bin.ts'), 'utf8').split('\n')[0]).toBe('#!/usr/bin/env node');
+        const index = readFileSync(join(dir, 'src', 'index.ts'), 'utf8');
+        expect(index).not.toMatch(/'\.\/(cli|bin)'/);
+        expect(pkg.sideEffects).toBe(false);
+    });
+
+    it('the publish smoke runs the command', () => {
+        const smoke = readFileSync(join(dir, 'scripts', 'smoke.cjs'), 'utf8');
+        expect(smoke).toContain("execFileSync(process.execPath, [path.join(pkg, 'dist/cjs/bin.js'), '--help']");
+        expect(pkg.scripts.prepublishOnly).toMatch(/smoke\.cjs/);
     });
 
     it('the README names the real path to a server key: Settings → Projects → Sources & keys → Server keys', () => {

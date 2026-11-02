@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.0
+
+- New command `sequential changes record`: records a change (a release, a launch, a price, an incident) on your
+  project's Changes timeline from a shell or a CI step. It reads a personal access token with the `changes:write` scope
+  from `SEQUENTIAL_TOKEN` only, never prints it, and refuses a server key. `--dry-run` prints what it would send. A
+  refused title says why with a short hint (for example `reads_as_agent_instruction: describe what changed, in the past
+  tense, not what to do`), never the text. The library itself is unchanged.
+- New command `sequential changes sync`: records a batch of 1 to 100 changes in ONE request (`record_changes`), the
+  way a CI run should, instead of `changes record` once per commit. `--items` is a file, or `-` for stdin, holding a
+  JSON array; more than 100 is refused, never split. One line per item; exit 3 when some were refused.
+- New command `sequential releases record`: posts a release marker (the version your app now runs), which fix
+  verification measures against. It reads its own token, a personal access token with the `releases:write` scope,
+  from `SEQUENTIAL_RELEASES_TOKEN` only.
+
 ## 1.0.4
 
 - New option `release`: the build your server runs, sent as `$release` on every event, so Sequential can compare
