@@ -178,16 +178,19 @@ be lost. The SDK's timer never keeps a process alive by itself.
 
 ## Command line
 
+These commands moved to the Sequential CLI, `@usesequential/cli` (`npx @usesequential/cli`). They still work here and
+print one line that says so. They leave this package in 2.0.
+
 The package also installs a `sequential` command. It records a change on your project's Changes timeline, for
 example from a deploy step:
 
 ```sh
-SEQUENTIAL_TOKEN=sq_pat_… npx sequential changes record \
+npx -p @usesequential/node sequential changes record \
   --kind release --title "Checkout v2.14" --version web@2.14 \
   --pr https://github.com/acme/shop/pull/812
 ```
 
-- The token is a personal access token with the `changes:write` scope, read from `SEQUENTIAL_TOKEN` only. It is never
+- The token is a project access token (`sq_pat_…`) with the `changes:write` scope, read from `SEQUENTIAL_TOKEN` only. It is never
   printed. A server key (`sqs_…`) sends events only and is refused.
 - `--kind` is one of release, product, pricing, marketing, incident, company, external or tracking; `--title` is one
   line, at most 140 characters. `--external-id` makes a repeat find the same entry.
@@ -196,7 +199,7 @@ SEQUENTIAL_TOKEN=sq_pat_… npx sequential changes record \
 - `--dry-run` prints what would be sent and sends nothing. `sequential --help` lists every option.
 - `sequential releases record --version web@2.14` posts that release marker: the version your app now runs, exactly
   as it sends it as its release, which fix verification measures against. It has its own token,
-  `SEQUENTIAL_RELEASES_TOKEN`, a personal access token with the `releases:write` scope, so a deploy step needs no
+  `SEQUENTIAL_RELEASES_TOKEN`, a project access token (`sq_pat_…`) with the `releases:write` scope, so a deploy step needs no
   right to write the timeline. Options: `--environment`, `--commit-sha`, `--released-at`, `--finding F-12`
   (repeatable).
 - The exit code is 0 when Sequential recorded it (or found it already recorded), 1 when it refused or could not be
@@ -206,7 +209,7 @@ In CI, record a run's changes in ONE request with `changes sync`, not `changes r
 
 ```sh
 git log --format='%H%x09%s' "$BEFORE..$AFTER" | jq -Rn '[inputs | split("\t") | {kind: "product", title: .[1], external_id: .[0]}]' \
-  | SEQUENTIAL_TOKEN=sq_pat_… npx sequential changes sync --items - --source git --covered-through "$(date -u +%FT%TZ)"
+  | npx -p @usesequential/node sequential changes sync --items - --source git --covered-through "$(date -u +%FT%TZ)"
 ```
 
 - `--items` is a file, or `-` for stdin, holding a JSON array of 1 to 100 changes, each with at least `kind` and

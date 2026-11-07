@@ -1,7 +1,7 @@
-// @usesequential/node: reading the browser context from a request.
+// @usesequential/node: reading the browser context from a request (spec 2026-10-12 §4.4, §8).
 import { contextFromRequest, parseContext, encodeContext, CONTEXT_COOKIE, CONTEXT_HEADER } from '../src';
 
-// What the browser SDK writes into the cookie: the whole value URI-encoded once more.
+// What the browser SDK writes into the cookie (spec §4.4): the whole value URI-encoded once more.
 const cookieValue = (d: string, s: string) => encodeURIComponent('v1;d=' + encodeURIComponent(d) + ';s=' + encodeURIComponent(s));
 
 describe('parseContext', () => {

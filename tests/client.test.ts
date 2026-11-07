@@ -1,4 +1,4 @@
-// @usesequential/node: batching, caps, retries, drops and the error helpers.
+// @usesequential/node (sdk/node): batching, caps, retries, drops and the error helpers (spec 2026-10-12 §8).
 import { SequentialServer, SequentialError, SERVER_MAX_EVENTS } from '../src';
 
 const KEY = 'sqs_' + 'a1B2'.repeat(10);
@@ -325,7 +325,7 @@ describe('SequentialServer: retries', () => {
         expect(sq2.stats.dropped_after_retries).toBe(1);
     });
 
-    // 503 overloaded (the server answers it with Retry-After 30-60 s while its database is down, 3-8 s when shedding load): held like
+    // 503 overloaded (BE #1056: ClickHouse down answers it with Retry-After 30-60 s; load shedding with 3-8 s): held like
     // a 429, up to maxRetryMs (5 min) from the first failure, without spending maxRetries (2026-10-22).
     const overloaded = (sec: number) => ({ status: 503, headers: { 'retry-after': String(sec) }, body: { error: 'overloaded', retry_after_sec: sec } });
 
@@ -447,7 +447,7 @@ describe('SequentialServer: retries', () => {
     });
 });
 
-describe('SequentialServer: errors', () => {
+describe('SequentialServer: errors (spec §7.3)', () => {
     it('captureError sends $exception with the type, the message and the first 20 stack lines', async () => {
         const { f, calls } = fakeFetch();
         const sq = client({}, f);

@@ -62,7 +62,7 @@ describe('@usesequential/node package', () => {
         expect(pkg.scripts.prepublishOnly).toMatch(/smoke\.cjs/);
     });
 
-    it('the README names the real path to a server key: Settings → Projects → Sources & keys → Server keys', () => {
+    it('the README names the real path to a server key: Settings → Projects → Sources & keys → Server keys (R11)', () => {
         const readme = readFileSync(join(dir, 'README.md'), 'utf8').replace(/\s+/g, ' ');
         expect(readme.replace(/\s+/g, ' ')).toContain("open your project's **Sources & keys** tab, then **Server keys → Create a server key**");
         expect(readme).not.toContain('Settings → Server keys');

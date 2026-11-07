@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.0
+
+- The `sequential` commands (`changes record`, `changes sync`, `releases record`) moved to the Sequential CLI,
+  `@usesequential/cli`. They still work here, and print one line on stderr that says so. They leave this package in 2.0.
+  The library itself is unchanged.
+- Fix: `changes sync --source-detail` now puts the detail on every item that names none. Before, Sequential refused every
+  such run (`sync_mismatch`). Items that a 1.1.x run stored without the detail are not matched again by their `external_id`.
+- The CLI's requests no longer follow a redirect, so the token never goes to another host.
+- The README runs the commands with `npx -p @usesequential/node sequential`, never `npx sequential` (another package
+  could own that name).
+
+## 1.1.1
+
+- Wording only: the CLI's help, its token errors and the README call the token what the app calls it, a project access
+  token (`sq_pat_…`), instead of a personal access token. The token, its scopes and every behaviour are unchanged.
+
 ## 1.1.0
 
 - New command `sequential changes record`: records a change (a release, a launch, a price, an incident) on your

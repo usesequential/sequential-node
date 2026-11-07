@@ -1,6 +1,6 @@
-// @usesequential/node: the `sequential changes record` command (src/cli.ts). Imports only the package's own
+// @usesequential/node: the `sequential changes record` command (sdk/node/src/cli.ts). Imports only the package's own
 // source, so it runs in the public repository too. The token never shows in anything the command prints.
-import { FINDINGS_MAX, HELP, LINKS_MAX, TITLE_MAX, TIMEOUT_MS, apiHost, changeBody, main, parseArgs, releaseBody, tokenFrom } from '../src/cli';
+import { FINDINGS_MAX, HELP, LINKS_MAX, MOVED, TITLE_MAX, TIMEOUT_MS, apiHost, changeBody, main, parseArgs, releaseBody, tokenFrom } from '../src/cli';
 import { DEFAULT_HOST } from '../src/client';
 import { SDK_VERSION } from '../src/version';
 
@@ -17,7 +17,7 @@ function run(argv: string[], env: Record<string, string | undefined> = ENV, answ
         if (answer === 'not-json') return new Response('<html>bad gateway</html>', { status: 502 });
         return new Response(JSON.stringify(answer.body ?? {}), { status: answer.status });
     }) as unknown as typeof globalThis.fetch;
-    return main(argv, env, { out: (l) => out.push(l), err: (l) => err.push(l), fetch }).then((code) => ({ code, out, err, calls, printed: [...out, ...err].join('\n') }));
+    return main(argv, env, { out: (l) => out.push(l), err: (l) => err.push(l), fetch }).then((code) => ({ code, out, err: err.filter((l) => l !== MOVED), moved: err.filter((l) => l === MOVED).length, calls, printed: [...out, ...err.filter((l) => l !== MOVED)].join('\n') }));
 }
 const sent = (r: { calls: { init: RequestInit }[] }) => JSON.parse(String(r.calls[0].init.body));
 const REC = ['changes', 'record', '--kind', 'release', '--title', 'v2.14'];
@@ -70,6 +70,17 @@ describe('sequential changes record: what is sent', () => {
     });
 });
 
+describe('1.2.0', () => {
+    it('a request never follows a redirect (the token stays on its host)', async () => {
+        const r = await run(REC);
+        expect(r.calls[0].init.redirect).toBe('error');
+    });
+    it('the moved notice is printed once on stderr; --help prints none', async () => {
+        expect((await run(REC)).moved).toBe(1);
+        expect((await run(['--help'])).moved).toBe(0);
+    });
+});
+
 describe('the dry run', () => {
     it('prints where and what it would send, sends nothing, and needs no token', async () => {
         const r = await run([...REC, '--dry-run'], {});
@@ -96,7 +107,7 @@ describe('the token', () => {
         [{}, 'SEQUENTIAL_TOKEN is not set'],
         [{ SEQUENTIAL_TOKEN: '  ' }, 'SEQUENTIAL_TOKEN is not set'],
         [{ SEQUENTIAL_TOKEN: SERVER_KEY }, 'holds a server key'],
-        [{ SEQUENTIAL_TOKEN: 'sq_write_' + 'Qw7'.repeat(12) }, 'is not a personal access token'],
+        [{ SEQUENTIAL_TOKEN: 'sq_write_' + 'Qw7'.repeat(12) }, 'is not a project access token'],
     ])('refuses %#, says why, sends nothing, and never repeats the value', async (env, says) => {
         const r = await run(REC, env as Record<string, string>);
         expect(r.code).toBe(2);
@@ -255,13 +266,13 @@ describe('sequential releases record', () => {
         const r = await run(REL, ENV, created);
         expect(r.code).toBe(2);
         expect(r.calls).toHaveLength(0);
-        expect(r.err).toEqual(['sequential: SEQUENTIAL_RELEASES_TOKEN is not set: create a personal access token with the releases:write scope']);
-        expect((await run(REC, RENV)).err).toEqual(['sequential: SEQUENTIAL_TOKEN is not set: create a personal access token with the changes:write scope']);
+        expect(r.err).toEqual(['sequential: SEQUENTIAL_RELEASES_TOKEN is not set: create a project access token (sq_pat_…) with the releases:write scope']);
+        expect((await run(REC, RENV)).err).toEqual(['sequential: SEQUENTIAL_TOKEN is not set: create a project access token (sq_pat_…) with the changes:write scope']);
         const key = await run(REL, { SEQUENTIAL_RELEASES_TOKEN: 'sqs_' + 'Qw7'.repeat(12) });
         expect(key.err[0]).toContain('SEQUENTIAL_RELEASES_TOKEN holds a server key');
         expect(key.err[0]).toContain('releases:write');
         expect(key.printed).not.toContain('Qw7');
-        expect((await run(REL, { SEQUENTIAL_RELEASES_TOKEN: 'sq_x_' + 'Qw7'.repeat(12) })).err).toEqual(['sequential: SEQUENTIAL_RELEASES_TOKEN is not a personal access token (sq_pat_…)']);
+        expect((await run(REL, { SEQUENTIAL_RELEASES_TOKEN: 'sq_x_' + 'Qw7'.repeat(12) })).err).toEqual(['sequential: SEQUENTIAL_RELEASES_TOKEN is not a project access token (sq_pat_…)']);
     });
 
     it('a dry run prints the marker and sends nothing', async () => {

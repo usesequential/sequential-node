@@ -1,7 +1,7 @@
-// @usesequential/node: `sequential changes sync` (src/cli.ts): a CI run's changes in ONE
+// @usesequential/node: `sequential changes sync` (sdk/node/src/cli.ts, owner item 12b): a CI run's changes in ONE
 // record_changes request, at most ITEMS_MAX items (more is refused, never split), one line per item, exit 3 when some
 // were refused. Imports only the package's own source, so it runs in the public repository too.
-import { ITEMS_MAX, REASON_HINTS, TITLE_MAX, main, parseArgs, syncBody } from '../src/cli';
+import { ITEMS_MAX, MOVED, REASON_HINTS, TITLE_MAX, main, parseArgs, syncBody } from '../src/cli';
 import { DEFAULT_HOST } from '../src/client';
 
 const TOKEN = 'sq_pat_' + 'Zx9'.repeat(12);
@@ -25,7 +25,7 @@ function run(argv: string[], files: Record<string, string> = { 'items.json': ITE
         if (!(path in files)) throw new Error('ENOENT');
         return files[path];
     };
-    return main(argv, ENV, { out: (l) => out.push(l), err: (l) => err.push(l), fetch, readText }).then((code) => ({ code, out, err, calls, reads, printed: [...out, ...err].join('\n') }));
+    return main(argv, ENV, { out: (l) => out.push(l), err: (l) => err.push(l), fetch, readText }).then((code) => ({ code, out, err: err.filter((l) => l !== MOVED), moved: err.filter((l) => l === MOVED).length, calls, reads, printed: [...out, ...err.filter((l) => l !== MOVED)].join('\n') }));
 }
 const sent = (r: { calls: { init: RequestInit }[] }) => JSON.parse(String(r.calls[0].init.body));
 const SYNC = ['changes', 'sync', '--items', 'items.json'];
@@ -44,14 +44,22 @@ describe('sequential changes sync: one request per run', () => {
         expect(r.reads).toEqual(['-']);
         expect(sent(r).items).toHaveLength(2);
     });
-    it('--source fills the items that name none; an item\'s own source stays; --covered-* make the sync block; --atomic', async () => {
-        const r = await run([...SYNC, '--source', 'git', '--source-detail', 'acme/shop', '--covered-from', '2026-10-27T00:00:00Z', '--covered-through', '2026-10-28T00:00:00Z', '--atomic'],
-            { 'items.json': JSON.stringify([item(0), item(1, { source: 'github' })]) });
+    it('--source and --source-detail fill the items that name none; an item\'s own stays; --covered-* make the sync block; --atomic', async () => {
+        // 1.2.0: the detail goes into the items too, so the server's sync check (every item carries the sync's
+        // source_detail, BE src/changes/service.ts) passes. Before, every such run was refused as sync_mismatch.
+        const r = await run([...SYNC, '--source', 'git', '--source-detail', 'acme.shop', '--covered-from', '2026-10-27T00:00:00Z', '--covered-through', '2026-10-28T00:00:00Z', '--atomic'],
+            { 'items.json': JSON.stringify([item(0), item(1, { source: 'github', source_detail: 'other.repo' })]) });
         expect(sent(r)).toEqual({
-            items: [{ ...item(0), source: 'git' }, { ...item(1), source: 'github' }],
+            items: [{ ...item(0), source: 'git', source_detail: 'acme.shop' }, { ...item(1), source: 'github', source_detail: 'other.repo' }],
             atomic: true,
-            sync: { source: 'git', source_detail: 'acme/shop', covered_from: '2026-10-27T00:00:00Z', covered_through: '2026-10-28T00:00:00Z' },
+            sync: { source: 'git', source_detail: 'acme.shop', covered_from: '2026-10-27T00:00:00Z', covered_through: '2026-10-28T00:00:00Z' },
         });
+    });
+    it('the moved notice: one stderr line per run, never on stdout', async () => {
+        const r = await run(SYNC);
+        expect(r.moved).toBe(1);
+        expect(r.out.join('\n')).not.toContain('moved to');
+        expect(MOVED).toBe('sequential: these commands moved to the Sequential CLI (npx @usesequential/cli); they leave @usesequential/node in 2.0.');
     });
     it(`${ITEMS_MAX} items go in one request; ${ITEMS_MAX + 1} are refused before anything is sent (never split)`, async () => {
         const full = await run(SYNC, { 'items.json': JSON.stringify(Array.from({ length: ITEMS_MAX }, (_, i) => item(i))) },

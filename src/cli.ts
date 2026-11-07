@@ -6,7 +6,7 @@
 // bin.ts runs it; this file only parses and sends, so a test can run it with a fake fetch.
 //
 // Each token comes from its environment variable only (never an argument, which shells and CI logs keep), must be a
-// personal access token, and is never printed. One scope per token: a deploy step that posts markers needs no right to
+// project access token, and is never printed. One scope per token: a deploy step that posts markers needs no right to
 // write the timeline. Errors name the HTTP status and Sequential's error code, never a response body or header.
 import { DEFAULT_HOST, RELEASE_PATTERN, RELEASE_PLACEHOLDERS } from './client';
 import { SDK_VERSION } from './version';
@@ -21,7 +21,7 @@ export const EXTERNAL_ID_MAX = 128;
 export const TIMEOUT_MS = 15_000;
 export const FINDINGS_MAX = 50;
 /** The most items one `changes sync` run sends: record_changes' own limit. More is refused, never split into several
- *  requests: one run is one request (owner item 12b), so a run's refused titles count against the token once. */
+ *  requests: one run is one request (owner item 12b). */
 export const ITEMS_MAX = 100;
 const PAT_PREFIX = 'sq_pat_';
 const SERVER_KEY_PREFIX = 'sqs_';
@@ -31,7 +31,7 @@ export const HELP = `Usage: sequential changes record --kind <kind> --title <tex
        sequential releases record --version <version> [options]
 
 changes record: records one change on your project's Changes timeline. The token is
-read from SEQUENTIAL_TOKEN: a personal access token (sq_pat_…) with the changes:write
+read from SEQUENTIAL_TOKEN: a project access token (sq_pat_…) with the changes:write
 scope. It is never printed.
 
 Options:
@@ -272,13 +272,16 @@ export function syncBody(p: Parsed, text: string): Record<string, unknown> {
             throw new UsageError(`item ${i}: external_id is at most ${EXTERNAL_ID_MAX} characters`);
         return item.source === undefined ? { ...item, source } : item;
     });
-    const body: Record<string, unknown> = { items: out };
-    if (p.flags.has('atomic')) body.atomic = true;
     const through = one(p, 'covered-through');
     const from = one(p, 'covered-from');
     if (from !== undefined && through === undefined) throw new UsageError('--covered-from needs --covered-through');
+    const detail = one(p, 'source-detail');
+    // Sequential refuses a sync whose items do not carry the sync's source_detail (sync_mismatch), so --source-detail goes
+    // into every item that names none, as --source does (1.2.0; before, every run with it was refused).
+    const items2 = detail === undefined ? out : out.map((it) => (it.source_detail === undefined ? { ...it, source_detail: detail } : it));
+    const body: Record<string, unknown> = { items: items2 };
+    if (p.flags.has('atomic')) body.atomic = true;
     if (through !== undefined) {
-        const detail = one(p, 'source-detail');
         body.sync = { source, ...(detail !== undefined ? { source_detail: detail } : {}), ...(from !== undefined ? { covered_from: from } : {}), covered_through: through };
     }
     return body;
@@ -286,10 +289,10 @@ export function syncBody(p: Parsed, text: string): Record<string, unknown> {
 
 export function tokenFrom(env: Record<string, string | undefined>, name = 'SEQUENTIAL_TOKEN', scope = 'changes:write'): string {
     const t = env[name]?.trim();
-    if (!t) throw new UsageError(`${name} is not set: create a personal access token with the ${scope} scope`);
+    if (!t) throw new UsageError(`${name} is not set: create a project access token (sq_pat_…) with the ${scope} scope`);
     if (t.startsWith(SERVER_KEY_PREFIX))
-        throw new UsageError(`${name} holds a server key, which sends events only: use a personal access token (sq_pat_…) with the ${scope} scope`);
-    if (!t.startsWith(PAT_PREFIX)) throw new UsageError(`${name} is not a personal access token (sq_pat_…)`);
+        throw new UsageError(`${name} holds a server key, which sends events only: use a project access token (sq_pat_…) with the ${scope} scope`);
+    if (!t.startsWith(PAT_PREFIX)) throw new UsageError(`${name} is not a project access token (sq_pat_…)`);
     return t;
 }
 
@@ -340,6 +343,9 @@ function errorCode(body: unknown): string {
     return [code, field && `(${field})`, reason && `${reason}: ${REASON_HINTS[reason]}`].filter(Boolean).join(' ');
 }
 
+/** One stderr line on every run (1.2.0, owner 2026-11-06 ruling 2): the commands live on in the Sequential CLI. */
+export const MOVED = 'sequential: these commands moved to the Sequential CLI (npx @usesequential/cli); they leave @usesequential/node in 2.0.';
+
 /** Runs the command; the exit code: 0 recorded (or a dry run), 1 refused or not reached, 2 a usage mistake, 3 (changes sync)
  *  some items refused. */
 export async function main(argv: readonly string[], env: Record<string, string | undefined>, io: Io): Promise<number> {
@@ -355,6 +361,7 @@ export async function main(argv: readonly string[], env: Record<string, string |
             return p.flags.has('help') ? 0 : 2;
         }
         name = p.positional.join(' ');
+        io.err(MOVED);
         const found = COMMANDS.get(name);
         const takes = TAKES.get(name);
         if (!found || !takes) throw new UsageError(`unknown command: ${name}`);
@@ -387,6 +394,8 @@ export async function main(argv: readonly string[], env: Record<string, string |
             method: 'POST',
             headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': `sequential-cli/${SDK_VERSION}` },
             body: JSON.stringify(body),
+            // A redirect never carries the token to another host.
+            redirect: 'error',
             signal: AbortSignal.timeout(TIMEOUT_MS),
         });
     } catch {
